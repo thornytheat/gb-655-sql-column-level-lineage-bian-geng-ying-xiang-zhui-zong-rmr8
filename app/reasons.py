@@ -49,6 +49,13 @@ CODES: dict[str, tuple[str, str]] = {
     "VERSION_APPLIED": ("版本已登记", "info"),
     "RUN_REUSED": ("同一输入命中已算批次", "info"),
     "WINDOW_INVERTED": ("生效区间起点不早于终点", "break"),
+    # 三方合并
+    "MERGE_BOTH_CHANGED": ("双方改了同一列", "break"),
+    "MERGE_DELETE_MODIFY": ("一方弃列另一方改列", "break"),
+    "MERGE_NAME_IDENTITY": ("同名但身份不同", "break"),
+    "MERGE_RULING_MISSING": ("冲突项尚未裁定", "warn"),
+    "MERGE_STALE": ("确认期间主线已变更", "break"),
+    "MERGE_BATCH_DONE": ("合并批次已生成", "info"),
     # 结论
     "COMPATIBLE": ("兼容", "info"),
     "COMPATIBLE_BY_MAPPING": ("加别名后兼容", "warn"),

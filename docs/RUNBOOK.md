@@ -23,7 +23,8 @@ docker compose exec -T app python -m pytest -q
 3. `/mapping` 看旧名到新名、别名 SQL、冲突项。
 4. `/impact` 看受影响节点、环、断链、单边登记。
 5. `/batches` 点「跑一次」，再点「陈旧提交」验证 409。
-6. `/spec` 导出迁移单与三份账目 CSV。
+6. `/merge` 用祖先 + 主线 + 分支建合并会话，逐项填理由选边，裁定齐全后出合并批次。
+7. `/spec` 导出迁移单与三份账目 CSV。
 
 ## 4 重建数据库
 
@@ -50,6 +51,11 @@ docker compose up -d --build
 | POST | `/api/runs` | 跑批次，可带基线版本号与生效区间 |
 | GET | `/api/batches` | 批次历史 |
 | GET | `/api/reconcile` | 四账对账 |
+| POST | `/api/merges` | 建合并会话，采信祖先 / 主线 / 分支 |
+| GET | `/api/merges` | 合并会话列表 |
+| GET | `/api/merges/{merge_id}` | 回读祖先、双方差异、冲突、裁定与合并结果 |
+| POST | `/api/merges/{merge_id}/rulings` | 逐项裁定，选边必须带理由 |
+| POST | `/api/merges/{merge_id}/batch` | 裁定齐全后生成合并批次，重试不重复 |
 | GET | `/api/export/spec.md` | 迁移单 Markdown |
 | GET | `/api/export/fields.csv` | 字段账 CSV |
 | GET | `/api/export/refs.csv` | 引用账 CSV |
@@ -61,6 +67,8 @@ docker compose up -d --build
 | 现象 | 原因 | 处置 |
 |---|---|---|
 | 409 `VERSION_STALE` | 提交带的基线序号落后 | 去掉 `base_version_seq` 或填当前序号 |
+| 409 `VERSION_STALE` / `MERGE_STALE` | 确认期间主线或合并输入变了 | 用当前主线重建合并会话 |
+| 409 `CONFLICT` / `MERGE_RULING_MISSING` | 合并还有冲突项没裁定 | 到 `/merge` 逐项填理由选边 |
 | 400 `WINDOW_INVERTED` | 生效区间起点不早于终点 | 检查 `effective_from` / `effective_to` |
 | 400 `BAD_INPUT` | 文件名、参数或 JSON 结构不对 | 看返回的 `detail` |
 | 404 `NOT_FOUND` | 还没跑过批次 | 先在 `/batches` 点「跑一次」 |

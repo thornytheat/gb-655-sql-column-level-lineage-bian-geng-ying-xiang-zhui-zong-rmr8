@@ -51,48 +51,23 @@ def _edges(old_snapshot: dict, new_snapshot: dict, diff: dict,
     return graph
 
 
-def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_NEW,
-            refs_file: str = config.DEFAULT_REFS, base_file: str | None = config.BASE_OLD,
-            base_version_seq=None, effective_from: str | None = None,
-            effective_to: str | None = None, params: dict | None = None) -> dict:
-    params = dict(params or {})
-    old_path = config.resolve_sample(old_file)
-    new_path = config.resolve_sample(new_file)
-    refs_path = config.resolve_sample(refs_file)
-    base_path = None
-    if base_file:
-        try:
-            base_path = config.resolve_sample(base_file)
-        except (errors.NotFound, errors.BadInput):
-            base_path = None
+def _window_key(window: dict) -> str:
+    return f"{window['from']}..{window['to'] or ''}"
 
-    old_snapshot = types.prepare(intake.ingest(old_file))
-    new_snapshot = types.prepare(intake.ingest(new_file))
-    base_snapshot = types.prepare(intake.ingest(base_file)) if base_path else None
-    refs = mapping.load_refs(refs_file)
 
-    window = window_mod.normalize(effective_from, effective_to,
-                                 new_snapshot["version_label"])
+def make_key(digests: dict, window: dict, params: dict) -> str:
+    return manifest_mod.batch_key(
+        digests, {"window": _window_key(window), **params}, config.RULESET_VERSION
+    )
 
-    paths = {"old": old_path, "new": new_path, "refs": refs_path}
-    names = {"old": old_file, "new": new_file, "refs": refs_file}
-    if base_path is not None:
-        paths["base"] = base_path
-        names["base"] = base_file
-    digests = {role: manifest_mod.sha256_file(path) for role, path in sorted(paths.items())}
-    window_key = f"{window['from']}..{window['to'] or ''}"
-    key = manifest_mod.batch_key(digests, {"window": window_key, **params},
-                                 config.RULESET_VERSION)
 
-    # 陈旧提交先拒：基线落后时，连复用都不该给
-    guard.check_stale(base_version_seq, store.current_version_seq())
+def build_run(old_snapshot: dict, new_snapshot: dict, base_snapshot: dict | None,
+              refs: dict, window: dict, digests: dict, names: dict, params: dict,
+              key: str, extra: dict | None = None) -> dict:
+    """由已采信的双方快照算出完整批次，不落库。
 
-    existing = store.find_run_by_key(key)
-    if existing is not None:
-        reused = dict(existing)
-        reused["reused"] = True
-        return reused
-
+    execute 与合并批次共用这一段，保证兼容、映射、影响面与账目口径一致。
+    """
     ref_counts = _ref_counts(refs["consumers"])
     diff = compat.diff_snapshots(old_snapshot, new_snapshot, ref_counts)
     edges = _edges(old_snapshot, new_snapshot, diff, base_snapshot)
@@ -149,7 +124,54 @@ def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_N
         "warnings": warnings,
         "reused": False,
     }
+    if extra:
+        run.update(extra)
     run["summary"] = history.summary_of(run)
+    return run
+
+
+def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_NEW,
+            refs_file: str = config.DEFAULT_REFS, base_file: str | None = config.BASE_OLD,
+            base_version_seq=None, effective_from: str | None = None,
+            effective_to: str | None = None, params: dict | None = None) -> dict:
+    params = dict(params or {})
+    old_path = config.resolve_sample(old_file)
+    new_path = config.resolve_sample(new_file)
+    refs_path = config.resolve_sample(refs_file)
+    base_path = None
+    if base_file:
+        try:
+            base_path = config.resolve_sample(base_file)
+        except (errors.NotFound, errors.BadInput):
+            base_path = None
+
+    old_snapshot = types.prepare(intake.ingest(old_file))
+    new_snapshot = types.prepare(intake.ingest(new_file))
+    base_snapshot = types.prepare(intake.ingest(base_file)) if base_path else None
+    refs = mapping.load_refs(refs_file)
+
+    window = window_mod.normalize(effective_from, effective_to,
+                                 new_snapshot["version_label"])
+
+    paths = {"old": old_path, "new": new_path, "refs": refs_path}
+    names = {"old": old_file, "new": new_file, "refs": refs_file}
+    if base_path is not None:
+        paths["base"] = base_path
+        names["base"] = base_file
+    digests = {role: manifest_mod.sha256_file(path) for role, path in sorted(paths.items())}
+    key = make_key(digests, window, params)
+
+    # 陈旧提交先拒：基线落后时，连复用都不该给
+    guard.check_stale(base_version_seq, store.current_version_seq())
+
+    existing = store.find_run_by_key(key)
+    if existing is not None:
+        reused = dict(existing)
+        reused["reused"] = True
+        return reused
+
+    run = build_run(old_snapshot, new_snapshot, base_snapshot, refs, window,
+                    digests, names, params, key)
     store.save_run(run)
     return run
 

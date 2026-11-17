@@ -31,6 +31,50 @@ const ACTIONS = {
     }
     return `比较完成 ${result.change}`;
   },
+
+  async mergeCreate(button) {
+    const form = button.closest('[data-merge-create]');
+    const body = {};
+    if (form) {
+      for (const input of form.querySelectorAll('input[name]')) {
+        if (input.value.trim()) body[input.name] = input.value.trim();
+      }
+    }
+    const created = await request('/api/merges', body);
+    window.location.href = `/merge?merge_id=${encodeURIComponent(created.merge_id)}`;
+    return `会话 ${created.merge_id} 待裁定 ${created.counts.pending} 项`;
+  },
+
+  async mergeRule(button) {
+    const detail = button.closest('[data-merge-detail]');
+    const mergeId = detail && detail.dataset.mergeId;
+    if (!mergeId) return '没有合并会话';
+    const rulings = [];
+    const reasons = {};
+    for (const input of document.querySelectorAll('[data-ruling-reason]')) {
+      const itemKey = input.dataset.item;
+      reasons[itemKey] = input.value.trim();
+      if (reasons[itemKey]) {
+        const select = document.querySelector(`[data-ruling-choice][data-item="${CSS.escape(itemKey)}"]`);
+        rulings.push({ item_key: itemKey, choice: select ? select.value : 'ours',
+                       reason: reasons[itemKey] });
+      }
+    }
+    if (!rulings.length) throw new Error('至少为一冲突项填写理由');
+    const result = await request(`/api/merges/${encodeURIComponent(mergeId)}/rulings`,
+                                 { rulings });
+    window.location.reload();
+    return `已存裁定 ${Object.keys(result.rulings || {}).length} 项，未决 ${result.counts.pending} 项`;
+  },
+
+  async mergeBatch(button) {
+    const detail = button.closest('[data-merge-detail]');
+    const mergeId = detail && detail.dataset.mergeId;
+    if (!mergeId) return '没有合并会话';
+    const result = await request(`/api/merges/${encodeURIComponent(mergeId)}/batch`, {});
+    window.location.href = `/merge?merge_id=${encodeURIComponent(mergeId)}`;
+    return `合并批次 ${result.run_id}`;
+  },
 };
 
 async function request(url, body) {
@@ -66,7 +110,9 @@ document.addEventListener('click', async (event) => {
   const name = button.dataset.action;
   const handler = ACTIONS[name];
   if (!handler) return;
-  const target = document.querySelector('[data-flash]');
+  const target = button.closest('[data-merge-detail]')
+    ? button.closest('[data-merge-detail]').querySelector('[data-flash]')
+    : document.querySelector('[data-flash]');
   button.disabled = true;
   flash(target, '…', false);
   try {
@@ -80,4 +126,12 @@ document.addEventListener('click', async (event) => {
   } finally {
     button.disabled = false;
   }
+});
+
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest('[data-merge-create]');
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button');
+  if (button) button.click();
 });

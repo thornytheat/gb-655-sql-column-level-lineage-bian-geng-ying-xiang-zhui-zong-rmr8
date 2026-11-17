@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}三方合并 · lineageguard{% endblock %}
+{% block body %}
+<section class="doc-section">
+  <h1>三方合并</h1>
+  <p class="lede">以共同祖先识别双方独立改动，同列异改与同名异身份逐项选边</p>
+
+  <form class="actions" data-merge-create>
+    <label>祖先 <input name="ancestor_file" value="{{ defaults["ancestor"] }}" size="22"></label>
+    <label>主线 <input name="ours_file" value="{{ defaults["ours"] }}" size="22"></label>
+    <label>分支 <input name="theirs_file" value="{{ defaults["theirs"] }}" size="22"></label>
+    <label>登记 <input name="refs_file" value="{{ defaults["refs"] }}" size="22"></label>
+    <button type="submit" data-action="mergeCreate">建立合并会话</button>
+    <span class="flash" data-flash></span>
+  </form>
+</section>
+
+{% if sessions %}
+<section class="doc-section">
+  <h2><span class="clause">2</span>会话</h2>
+  <div class="wrap-scroll">
+    <table>
+      <caption>合并会话<sup class="fn">1</sup></caption>
+      <thead>
+        <tr><th>会话</th><th>状态</th><th>主线序号</th><th>版本</th><th class="num">裁定</th><th>批次</th><th>生成</th></tr>
+      </thead>
+      <tbody>
+        {% for item in sessions %}
+        <tr>
+          <td class="name"><a href="/merge?merge_id={{ item.merge_id }}">{{ item.merge_id }}</a></td>
+          <td>{% if item.status == 'merged' %}<span class="st st-ok">已出批</span>
+              {% elif item.status == 'ready' %}<span class="st st-warn">裁定齐全</span>
+              {% else %}<span class="st st-info">待裁定</span>{% endif %}</td>
+          <td class="num">{{ item.head_version_seq }}</td>
+          <td class="name">{{ item.version_label }}</td>
+          <td class="num">{{ item.rulings }}</td>
+          <td class="name">{{ item.run_id or '—' }}</td>
+          <td class="name">{{ item.created_at|day }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if detail %}
+<section class="doc-section" data-merge-detail data-merge-id="{{ detail.merge_id }}">
+  <h2><span class="clause">3</span>回读</h2>
+  <dl class="ledger">
+    <div><dt>会话</dt><dd class="mono">{{ detail.merge_id }}</dd></div>
+    <div><dt>状态</dt><dd>{{ detail.status }}</dd></div>
+    <div><dt>祖先字段</dt><dd>{{ detail.counts.ancestor }}<span class="unit">个</span></dd></div>
+    <div><dt>主线字段</dt><dd>{{ detail.counts.ours }}<span class="unit">个</span></dd></div>
+    <div><dt>分支字段</dt><dd>{{ detail.counts.theirs }}<span class="unit">个</span></dd></div>
+    <div><dt>自动保留</dt><dd>{{ detail.counts.auto_kept }}<span class="unit">个</span></dd></div>
+    <div><dt>冲突</dt><dd>{{ detail.counts.conflicts }}<span class="unit">项</span></dd></div>
+    <div><dt>已裁定</dt><dd>{{ detail.counts.ruled }}<span class="unit">项</span></dd></div>
+    <div><dt>未决</dt><dd>{{ detail.counts.pending }}<span class="unit">项</span></dd></div>
+    <div><dt>合并字段</dt><dd>{{ detail.counts.merged }}<span class="unit">个</span></dd></div>
+  </dl>
+  {% if detail.staleness %}
+  <p class="empty">会话建立后主线或输入有变化（{{ detail.staleness|length }} 处），旧会话不再接受裁定与出批，请重建。</p>
+  {% endif %}
+
+  <h3>双方差异（对祖先）</h3>
+  <div class="split">
+    <div>
+      <h4>主线</h4>
+      <p class="lede">增 {{ detail.side_diffs.ours.counts.added }}　删 {{ detail.side_diffs.ours.counts.removed }}　改 {{ detail.side_diffs.ours.counts.changed }}</p>
+    </div>
+    <div>
+      <h4>分支</h4>
+      <p class="lede">增 {{ detail.side_diffs.theirs.counts.added }}　删 {{ detail.side_diffs.theirs.counts.removed }}　改 {{ detail.side_diffs.theirs.counts.changed }}</p>
+    </div>
+  </div>
+
+  <h3>冲突项</h3>
+  {% if detail["items"] %}
+  <div class="wrap-scroll">
+    <table data-merge-items>
+      <thead><tr><th>项</th><th>种类</th><th>祖先</th><th>主线</th><th>分支</th><th>选边</th><th>理由</th></tr></thead>
+      <tbody>
+        {% for item in detail["items"] %}
+        <tr>
+          <td class="name mono">{{ item.item_key }}</td>
+          <td class="reason"><span class="code">{{ item.reason|reason }}</span></td>
+          {% if item.kind == 'name_identity' %}
+          <td class="name" colspan="3">
+            同名 {{ item.name }}：{% for cand in item.candidates %}{{ cand.field.table }}.{{ cand.field.name }}（<span class="mono">{{ cand.field.field_id }}</span>，{{ '主线' if cand.ours_present else '分支' }}）{% if not loop.last %}　{% endif %}{% endfor %}
+          </td>
+          {% else %}
+          <td class="name">{{ (item.base.name ~ ' ' ~ item.base.type) if item.base else '—' }}</td>
+          <td class="name">{{ (item.ours.name ~ ' ' ~ item.ours.type) if item.ours else '弃列' }}</td>
+          <td class="name">{{ (item.theirs.name ~ ' ' ~ item.theirs.type) if item.theirs else '弃列' }}</td>
+          {% endif %}
+          <td>
+            <select data-ruling-choice data-item="{{ item.item_key }}">
+              {% for option in item.choices %}<option value="{{ option }}">{{ '主线' if option == 'ours' else '分支' }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input data-ruling-reason data-item="{{ item.item_key }}" size="26" placeholder="必填"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="actions">
+    <button type="button" data-action="mergeRule">保存裁定</button>
+    <span class="flash" data-flash></span>
+  </div>
+  {% else %}
+  <p class="empty">没有冲突项。</p>
+  {% endif %}
+
+  {% if detail.rulings %}
+  <h3>已存裁定</h3>
+  <table>
+    <thead><tr><th>项</th><th>选边</th><th>理由</th></tr></thead>
+    <tbody>
+      {% for key, value in detail.rulings.items() %}
+      <tr><td class="name mono">{{ key }}</td><td>{{ value.choice }}</td><td>{{ value.reason }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if detail.result %}
+  <h3>合并结果</h3>
+  <dl class="ledger">
+    <div><dt>批次</dt><dd class="mono">{{ detail.result.run_id }}</dd></div>
+    <div><dt>序号</dt><dd>{{ detail.result.version_seq }}</dd></div>
+    <div><dt>破坏</dt><dd>{{ detail.result.breaking_fields }}<span class="unit">个</span></dd></div>
+    <div><dt>受影节点</dt><dd>{{ detail.result.impact.get('reachable', 0) }}<span class="unit">处</span></dd></div>
+  </dl>
+  {% elif detail.counts.pending == 0 and not detail.orphan_rulings %}
+  <div class="actions">
+    <button type="button" data-action="mergeBatch">生成合并批次</button>
+    <span class="flash" data-flash></span>
+  </div>
+  {% elif detail.orphan_rulings %}
+  <p class="empty">存在失效裁定：{{ detail.orphan_rulings|join('、') }}，请重新裁定。</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<aside class="notes">
+  <ol class="footnotes">
+    <li>分支文件只读采信，不写快照；确认期间主线变化会拒绝旧会话。<a class="back" href="#main">↩</a></li>
+  </ol>
+</aside>
+{% endblock %}

@@ -56,7 +56,28 @@ CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS merge_sessions (
+    merge_id         TEXT PRIMARY KEY,
+    status           TEXT NOT NULL,
+    head_version_seq INTEGER NOT NULL,
+    head_run_id      TEXT,
+    version_label_new TEXT,
+    batch_key        TEXT,
+    run_id           TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    payload_json     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS merge_rulings (
+    merge_id   TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    choice     TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    PRIMARY KEY (merge_id, item_key)
+);
 CREATE INDEX IF NOT EXISTS idx_quarantine_schema ON quarantine(schema_id);
+CREATE INDEX IF NOT EXISTS idx_merge_sessions_status ON merge_sessions(status);
 """
 
 
@@ -83,7 +104,8 @@ def reset() -> None:
     """测试与重建用：清空全部业务表。"""
     with _LOCK, _connect() as conn:
         conn.executescript(SCHEMA)
-        for table in ("snapshots", "runs", "quarantine", "kv"):
+        for table in ("snapshots", "runs", "quarantine", "kv",
+                      "merge_rulings", "merge_sessions"):
             conn.execute(f"DELETE FROM {table}")
 
 
@@ -256,6 +278,82 @@ def list_windows() -> list[dict]:
             "SELECT run_id, effective_from, effective_to FROM runs ORDER BY version_seq"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------- 合并会话 ----------
+
+def save_merge_session(session: dict) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT INTO merge_sessions (merge_id, status, head_version_seq, head_run_id,
+                   version_label_new, batch_key, run_id, created_at, updated_at, payload_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(merge_id) DO UPDATE SET
+                   status=excluded.status,
+                   head_version_seq=excluded.head_version_seq,
+                   head_run_id=excluded.head_run_id,
+                   version_label_new=excluded.version_label_new,
+                   batch_key=excluded.batch_key,
+                   run_id=excluded.run_id,
+                   updated_at=excluded.updated_at,
+                   payload_json=excluded.payload_json""",
+            (
+                session["merge_id"], session["status"], int(session["head_version_seq"]),
+                session.get("head_run_id"), session.get("version_label_new"),
+                session.get("batch_key"), session.get("run_id"),
+                session["created_at"], session["updated_at"],
+                _dumps(session),
+            ),
+        )
+
+
+def load_merge_session(merge_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM merge_sessions WHERE merge_id=?", (merge_id,)
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def list_merge_sessions(limit: int = 30) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            """SELECT payload_json FROM merge_sessions
+               ORDER BY created_at DESC, merge_id LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]
+
+
+def save_merge_ruling(merge_id: str, item_key: str, choice: str, reason: str,
+                      decided_at: str) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT INTO merge_rulings (merge_id, item_key, choice, reason, decided_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(merge_id, item_key) DO UPDATE SET
+                   choice=excluded.choice,
+                   reason=excluded.reason,
+                   decided_at=excluded.decided_at""",
+            (merge_id, item_key, choice, reason, decided_at),
+        )
+
+
+def load_merge_rulings(merge_id: str) -> dict[str, dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            """SELECT item_key, choice, reason, decided_at FROM merge_rulings
+               WHERE merge_id=? ORDER BY item_key""",
+            (merge_id,),
+        ).fetchall()
+    return {
+        row["item_key"]: {
+            "choice": row["choice"],
+            "reason": row["reason"],
+            "decided_at": row["decided_at"],
+        }
+        for row in rows
+    }
 
 
 # ---------- 键值 ----------

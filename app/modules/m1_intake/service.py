@@ -25,6 +25,11 @@ def _schema_id(version_label: str, fields: list[dict]) -> str:
     return "sch-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
+def schema_id_for(version_label: str, fields: list[dict]) -> str:
+    """公开身份计算：合并出的字段清单也要有稳定 schema_id。"""
+    return _schema_id(version_label, fields)
+
+
 def _stats(diagnostics: list[dict], parsed_columns: int, accepted: int, tables: int) -> dict:
     """采信账：列定义行 = 接受 + 阻断，两边必须相等。"""
     blocked = sum(1 for row in diagnostics if row["blocking"])
@@ -39,8 +44,8 @@ def _stats(diagnostics: list[dict], parsed_columns: int, accepted: int, tables: 
     }
 
 
-def ingest(rel_name: str) -> dict:
-    """采信一份元数据文件，返回快照并写入 SQLite。"""
+def _read_and_fold(rel_name: str) -> dict:
+    """读文件并折叠成快照，不落库；供合并只读采信使用。"""
     path = config.resolve_sample(rel_name)
     raw = reader.read_meta_file(path)
 
@@ -93,7 +98,7 @@ def ingest(rel_name: str) -> dict:
     fields = folded["fields"]
     stats = _stats(diagnostics, len(parsed["columns"]), len(fields),
                    folded["stats"]["tables"])
-    snapshot = {
+    return {
         "schema_id": _schema_id(version_label, fields),
         "version_label": version_label,
         "source_path": raw.name,
@@ -111,8 +116,21 @@ def ingest(rel_name: str) -> dict:
         "field_count": len(fields),
         "blocked_count": stats["blocked"],
     }
+
+
+def preview(rel_name: str) -> dict:
+    """只读采信：与 ingest 同样的口径，但不写快照与隔离区。
+
+    合并要把分支读进来比对，却必须保证原分支不被改写，所以走这条路。
+    """
+    return _read_and_fold(rel_name)
+
+
+def ingest(rel_name: str) -> dict:
+    """采信一份元数据文件，返回快照并写入 SQLite。"""
+    snapshot = _read_and_fold(rel_name)
     store.save_snapshot(snapshot)
-    store.save_quarantine(snapshot["schema_id"], diagnostics)
+    store.save_quarantine(snapshot["schema_id"], snapshot["diagnostics"])
     return snapshot
 
 

@@ -1,6 +1,6 @@
 # 深度登记 lineageguard
 
-- 规模：中型（7 个功能模块，76 个文件，65 条测试）
+- 规模：中型（8 个功能模块，81 个文件，112 条测试）
 - 核心规则：SQL 别名源列先解析成列级边，依赖图通过环检测后再计算反向影响闭包。
 - 使用者与工作流：数仓开发在列改名或删除前，复核受影响的模型、任务与报表。
 
@@ -15,6 +15,7 @@
 | M5 影响面 | 解析列级边并查看下游影响、环、断链 | POST /api/lineage | `app/modules/m5_impact/handler.py` `app/modules/m5_impact/sql_lineage.py` `app/modules/m5_impact/closure.py` `app/modules/m5_impact/cycle.py` `app/modules/m5_impact/broken.py` | `tests/test_m5_impact.py` `tests/test_sql_lineage.py` |
 | M6 版本批次 | 跑批次、看历史、验陈旧拒绝与区间重叠 | POST /api/runs | `app/modules/m6_batches/handler.py` `app/modules/m6_batches/service.py` `app/modules/m6_batches/window.py` `app/modules/m6_batches/guard.py` `app/modules/m6_batches/history.py` | `tests/test_m6_batches.py` |
 | M7 迁移单 | 出带列级证据的单一迁移清单 | GET /api/export/evidence.csv | `app/modules/m7_migration/handler.py` `app/modules/m7_migration/service.py` `app/modules/m7_migration/csv_out.py` `app/modules/m7_migration/ledger.py` | `tests/test_m7_migration.py` |
+| M8 三方合并 | 用共同祖先合入离线分支，冲突逐项选边后出批 | POST /api/merges | `app/modules/m8_merge/handler.py` `app/modules/m8_merge/service.py` `app/modules/m8_merge/merge.py` | `tests/test_m8_merge.py` |
 
 ## 陷阱登记
 
@@ -30,6 +31,8 @@
 | TRAP-22 | 同一字段被连续改过两次名 | 只认最近一跳，最早的名字解析不到 | 跨版本改名链一路解析到底 | `app/modules/m4_mapping/rename.py` | `tests/test_m4_mapping.py::test_trap22_alias_chain_resolves_multi_hop` |
 | TRAP-25 | 两个版本生效区间重叠 | 取到哪版看运气 | 半开区间比较，重叠直接标记警告 | `app/modules/m6_batches/window.py` | `tests/test_m6_batches.py::test_trap25_overlap_flagged_but_adjacent_clean` |
 | TRAP-26 | 基于旧版本号提交 | 后提交无条件覆盖新结果 | 版本号乐观锁，基线落后即 409 | `app/modules/m6_batches/guard.py` | `tests/test_m6_batches.py::test_trap26_stale_submission_rejected` |
+| TRAP-27 | 合并时两方都改同一批字段 | 全选任一方都会丢另一方意图 | 三方对齐，只自动保留无冲突改动，其余逐项裁定 | `app/modules/m8_merge/merge.py` | `tests/test_m8_merge.py::test_independent_changes_keep_both` |
+| TRAP-28 | 合并出批中断后重试 | 重试又生成一份批次，账目翻倍 | 批次键含裁定摘要，命中即恢复收尾 | `app/modules/m8_merge/service.py` | `tests/test_m8_merge.py::test_recovers_when_batch_saved_but_session_not_finished` |
 
 ## 对账规则
 
@@ -46,3 +49,5 @@
 - 类型格只覆盖数值、字符、时间、布尔四族；映射表、数组、结构体一律算 `unknown`，保守判破坏。
 - 生效区间重叠只标记不阻断，最终以版本序号为准。
 - 打印页脚用 `counter(page)`，Chrome 打印预览不渲染该计数。
+- 三方合并只处理字段定义层；不扩展 SQL 血缘解析，也不做迁移单单独签收。
+- 合并以文件为输入，不做仓库级补丁应用；分支侧文件只读，不会回写。
